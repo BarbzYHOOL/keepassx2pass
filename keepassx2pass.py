@@ -1,21 +1,70 @@
-#! /usr/bin/env python
+#!/usr/bin/env python3
+#
+# Copyright (C) 2012 Juhamatti Niemelä <iiska@iki.fi>. All Rights Reserved.
+# This file is licensed under the GPLv2+. Please see COPYING for more information.
+#
+# Usage: ./keepassx2pass.py my_passwords.xml
+# Or:    python keepassx2pass.py my_passwords.xml
 
 import sys
+import re
 
 from subprocess import Popen, PIPE
 from xml.etree import ElementTree
 
+def space_to_camelcase(value):
+    output = ""
+    first_word_passed = False
+    for word in value.split(" "):
+        if not word:
+            output += "_"
+            continue
+        if first_word_passed:
+            output += word.capitalize()
+        else:
+            output += word.lower()
+        first_word_passed = True
+    return output
+
+def cleanTitle(title):
+    # make the title more command line friendly
+    title = re.sub("(\\|\||\(|\)|/)", "-", title)
+    title = re.sub("-$", "", title)
+    title = re.sub("\@", "At", title)
+    title = re.sub("'", "", title)
+    return title
+
 def path_for(element, path=''):
     """ Generate path name from elements title and current path """
-    title = element.find('title').text
+    title_text = element.find('title').text
+    if title_text is None:
+        title_text = ''
+    title = cleanTitle(title_text)
     return '/'.join([path, title])
+
+def password_data(element):
+    """ Return password data and additional info if available from
+    password entry element. """
+    passwd = element.find('password').text
+    ret = (passwd + "\n") if passwd else "\n"
+    for field in ['username', 'url', 'comment']:
+        fel = element.find(field)
+        children = [(e.text or '') + (e.tail or '') for e in list(fel)]
+        if len(children) > 0:
+            children.insert(0, '')
+        text = (fel.text or '') + "\n".join(children)
+        if len(text) > 0:
+            ret = "%s%s: %s\n" % (ret, fel.tag, text)
+    return ret
 
 def import_entry(element, path=''):
     """ Import new password entry to password-store using pass insert
     command """
-    proc = Popen(['pass', 'insert', '--force', path_for(element, path)],
-              stdin=PIPE, stdout=PIPE)
-    proc.communicate(element.find('password').text + "\n")
+    print("Importing " + path_for(element, path))
+    proc = Popen(['pass', 'insert', '--multiline', '--force',
+                  path_for(element, path)],
+                  stdin=PIPE, stdout=PIPE)
+    proc.communicate(password_data(element).encode())
     proc.wait()
 
 def import_group(element, path=''):
@@ -29,9 +78,8 @@ def import_group(element, path=''):
 
 def main(xml_file):
     """ Parse given KeepassX XML file and import password groups from it """
-    with open(xml_file) as xml:
-        for group in ElementTree.XML(xml.read()).findall('group'):
-            import_group(group)
+    for group in ElementTree.parse(xml_file).findall('group'):
+        import_group(group)
 
 if __name__ == '__main__':
     main(sys.argv[1])
